@@ -187,6 +187,7 @@ if usersettings.sendanonymoususagestatistics == "yes":
 while True:
     # Si existe el archivo de bloqueo, no se ejecuta el script
     if os.path.exists(LOCK_FILE):
+        
         print("Archivo de bloqueo encontrado, no se ejecuta el script")
         reader.close()
         while os.path.exists(LOCK_FILE):
