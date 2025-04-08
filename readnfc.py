@@ -6,9 +6,9 @@ import appsettings #you shouldnt need to edit this file
 import usersettings #this is the file you might need to edit
 import sys
 import os
+import atexit
 
-LOCK_FILE = "/home/development2/tmp/nfc_lock.txt"
-
+LOCK_FILE = "/tmp/nfc_lock.txt"
 # this function gets called when a NFC tag is detected
 def touched(tag):
     global sonosroom_local
@@ -122,6 +122,7 @@ def touched(tag):
                 'urltoget': urltoget
                 }
                 r = requests.post(appsettings.usagestatsurl, data = logdata)
+
     else:
         print("")
         print ("NFC reader could not read tag. This can be because the reader didn't get a clear read of the card. If the issue persists then this is usually because (a) the tag is encoded (b) you are trying to use a mifare classic card, which is not supported or (c) you have tried to add data to the card which is not in text format. Please check the data on the card using NFC Tools on Windows or Mac.")
@@ -184,20 +185,59 @@ print("")
 if usersettings.sendanonymoususagestatistics == "yes":
     r = requests.post(appsettings.usagestatsurl, data = {'time': time.time(), 'value1': appsettings.appversion, 'value2': hex(uuid.getnode()), 'value3': 'appstart'})
 
-while True:
-    # Si existe el archivo de bloqueo, no se ejecuta el script
+@atexit.register
+def cleanup():
     if os.path.exists(LOCK_FILE):
-        
-        print("Archivo de bloqueo encontrado, no se ejecuta el script")
-        reader.close()
+        os.remove(LOCK_FILE)
+        print(f"🧹 Archivo de bloqueo eliminado: {LOCK_FILE}")
+
+print("Iniciando lectura NFC...")
+
+reader = None
+retries = 0
+
+while True:
+    if os.path.exists(LOCK_FILE):
+        print("🔒 Archivo de bloqueo encontrado. Cerrando lector...")
+        if reader:
+            try:
+                reader.close()
+            except:
+                pass
+            reader = None
         while os.path.exists(LOCK_FILE):
             time.sleep(1)
-        print("Archivo de bloqueo eliminado, se reanuda el script")
-        reader = nfc.ContactlessFrontend(usersettings.nfc_reader_path)
-        continue
+        print("🔓 Archivo de bloqueo eliminado. Intentando reconectar lector...")
+        time.sleep(2)
+
     if not reader:
-        print("Reconectando al lector NFC")
-        reader = nfc.ContactlessFrontend(usersettings.nfc_reader_path)
-        
-    reader.connect(rdwr={'on-connect': touched, 'beep-on-connect': False})
+        try:
+            reader = nfc.ContactlessFrontend(usersettings.nfc_reader_path)
+            print("✅ Lector NFC conectado.")
+            retries = 0
+        except Exception as e:
+            print("❌ Error al conectar al lector NFC:", e)
+            reader = None
+            retries += 1
+            time.sleep(3)
+            if retries >= 2:
+                print("🚨 Lector no responde tras varios intentos. Reiniciando lector NFC...")
+                os.system("echo '1-1.4' | sudo tee /sys/bus/usb/drivers/usb/unbind")
+                time.sleep(1)
+                os.system("echo '1-1.4' | sudo tee /sys/bus/usb/drivers/usb/bind")
+                print("🔄 Lector reiniciado. Esperando conexión...")
+            continue
+
+    try:
+        reader.connect(rdwr={'on-connect': touched, 'beep-on-connect': False})
+    except Exception as e:
+        print("⚠️ Error en sesión de lectura:", e)
+        try:
+            reader.close()
+        except:
+            pass
+        reader = None
+        time.sleep(3)
+
     time.sleep(0.1)
+    
